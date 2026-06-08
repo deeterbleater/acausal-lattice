@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Acausal Lattice Visualizer</title>
+    <title>Acausal Lattice Sandbox</title>
     <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
     <style>
         body {
@@ -32,6 +32,7 @@
         #lattice-graph {
             flex: 2;
             border-right: 1px solid #2d3748;
+            position: relative;
         }
         #sidebar {
             flex: 1;
@@ -63,7 +64,7 @@
             padding: 0.5rem;
             border-radius: 4px;
             font-size: 0.8rem;
-            max-height: 300px;
+            max-height: 200px;
             overflow-y: auto;
         }
         .status-badge {
@@ -76,30 +77,90 @@
             background-color: #059669;
             color: white;
         }
+        .panel {
+            background-color: #1a1f29;
+            padding: 1rem;
+            border-radius: 4px;
+            border: 1px solid #2d3748;
+        }
+        .panel h3 { margin-top: 0; margin-bottom: 0.5rem; font-size: 0.9rem; color: #94a3b8; }
+        
+        /* Form Styles */
+        input[type="text"], select, textarea {
+            width: 100%;
+            padding: 0.5rem;
+            margin-bottom: 0.5rem;
+            background-color: #0f172a;
+            border: 1px solid #334155;
+            color: #e2e8f0;
+            border-radius: 4px;
+            box-sizing: border-box;
+            font-family: inherit;
+        }
+        button {
+            width: 100%;
+            padding: 0.5rem;
+            background-color: #3b82f6;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-family: inherit;
+        }
+        button:hover { background-color: #2563eb; }
+        
+        /* Node Inspector */
+        #inspector-content { font-size: 0.85rem; }
+        .inspector-row { margin-bottom: 0.25rem; }
+        .inspector-label { color: #64748b; font-weight: bold; }
     </style>
 </head>
 <body>
     <header>
-        <div>Acausal Lattice Visualizer</div>
+        <div>Acausal Lattice Sandbox</div>
         <div id="status" class="status-badge">Disconnected</div>
     </header>
     <main>
         <div id="lattice-graph"></div>
         <div id="sidebar">
-            <section>
+            <div class="panel">
                 <h3>Latent State Vector</h3>
                 <div id="vector-grid" class="vector-grid"></div>
-            </section>
-            <section>
-                <h3>Recent Events</h3>
+            </div>
+            
+            <div class="panel" id="inspector-panel">
+                <h3>Node Inspector</h3>
+                <div id="inspector-content">Select a node in the graph to view details.</div>
+            </div>
+
+            <div class="panel">
+                <h3>Inject Event (Third Agent)</h3>
+                <form id="inject-form">
+                    <textarea id="inj-content" rows="3" placeholder="Describe the new potential event..." required></textarea>
+                    <input type="text" id="inj-antecedents" placeholder="Dependencies (comma-separated IDs) e.g. 1, 2">
+                    <select id="inj-subspace">
+                        <option value="">No Subspace Warping (Identity)</option>
+                        <option value="0">Warp Subspace 0</option>
+                        <option value="1">Warp Subspace 1</option>
+                    </select>
+                    <button type="submit">Inject into Aion</button>
+                </form>
+            </div>
+
+            <div class="panel">
+                <h3>Telemetry</h3>
                 <div id="event-log" class="event-log"></div>
-            </section>
+            </div>
         </div>
     </main>
 
     <script>
+        // Data Stores
+        const achrononStore = new Map(); // id -> full Achronon object
         const nodes = new vis.DataSet();
         const edges = new vis.DataSet();
+        
+        // Network Initialization
         const container = document.getElementById('lattice-graph');
         const data = { nodes, edges };
         const options = {
@@ -126,35 +187,92 @@
         };
         const network = new vis.Network(container, data, options);
 
-        const eventSource = new EventSource('/stream');
+        // UI Elements
         const statusBadge = document.getElementById('status');
         const vectorGrid = document.getElementById('vector-grid');
         const eventLog = document.getElementById('event-log');
+        const inspectorContent = document.getElementById('inspector-content');
 
+        // SSE Setup
+        const eventSource = new EventSource('/stream');
         eventSource.onopen = () => {
             statusBadge.innerText = 'Connected';
             statusBadge.classList.add('status-active');
         };
-
         eventSource.onerror = () => {
             statusBadge.innerText = 'Error';
             statusBadge.classList.remove('status-active');
         };
-
         eventSource.onmessage = (e) => {
             const event = JSON.parse(e.data);
             handleEvent(event);
         };
 
+        // Graph Interaction
+        network.on("click", function (params) {
+            if (params.nodes.length > 0) {
+                const nodeId = params.nodes[0];
+                const achronon = achrononStore.get(nodeId);
+                if (achronon) {
+                    inspectorContent.innerHTML = `
+                        <div class="inspector-row"><span class="inspector-label">ID:</span> ${achronon.id}</div>
+                        <div class="inspector-row"><span class="inspector-label">Content:</span> ${achronon.content}</div>
+                        <div class="inspector-row"><span class="inspector-label">Operator:</span> ${achronon.transformation_id}</div>
+                        <div class="inspector-row"><span class="inspector-label">Subspace:</span> ${achronon.affected_subspace !== null ? achronon.affected_subspace : 'None'}</div>
+                        <div class="inspector-row"><span class="inspector-label">Antecedents:</span> [${achronon.antecedents.join(', ')}]</div>
+                    `;
+                    
+                    // Auto-fill antecedents if form is empty
+                    const antInput = document.getElementById('inj-antecedents');
+                    if(antInput.value === "") {
+                        antInput.value = nodeId;
+                    } else if (!antInput.value.includes(nodeId)) {
+                        antInput.value += `, ${nodeId}`;
+                    }
+                }
+            } else {
+                inspectorContent.innerHTML = "Select a node in the graph to view details.";
+            }
+        });
+
+        // Form Handling
+        document.getElementById('inject-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const content = document.getElementById('inj-content').value;
+            const antStr = document.getElementById('inj-antecedents').value;
+            const subStr = document.getElementById('inj-subspace').value;
+            
+            const antecedents = antStr.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n));
+            const affected_subspace = subStr === "" ? null : parseInt(subStr);
+
+            const payload = { content, antecedents, affected_subspace };
+
+            try {
+                const res = await fetch('/inject', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                if(res.ok) {
+                    document.getElementById('inj-content').value = ""; // clear content on success
+                } else {
+                    console.error("Injection failed");
+                }
+            } catch(err) {
+                console.error(err);
+            }
+        });
+
         function handleEvent(event) {
             const logItem = document.createElement('div');
-            logItem.style.marginBottom = '0.5rem';
+            logItem.style.marginBottom = '0.25rem';
             logItem.innerText = `[${new Date().toLocaleTimeString()}] ${event.type}`;
             eventLog.prepend(logItem);
 
             switch(event.type) {
                 case 'AionExpanded':
                     event.data.forEach(a => {
+                        achrononStore.set(a.id, a);
                         if (!nodes.get(a.id)) {
                             nodes.add({ id: a.id, label: `[${a.id}]`, title: a.content });
                             a.antecedents.forEach(ant => {

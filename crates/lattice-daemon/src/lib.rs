@@ -1,14 +1,15 @@
 use axum::{
-    extract::State,
+    extract::{State, Json},
     response::sse::{Event, Sse},
-    routing::get,
+    routing::{get, post},
     Router,
+    http::StatusCode,
 };
 use futures_util::stream::{self, Stream};
 use lattice_core::Achronon;
 use serde::{Deserialize, Serialize};
 use std::{convert::Infallible, sync::Arc, time::Duration};
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, mpsc};
 use tokio_stream::StreamExt;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -21,20 +22,32 @@ pub enum LatticeEvent {
     Message(String),
 }
 
-pub struct DaemonState {
-    pub tx: broadcast::Sender<LatticeEvent>,
+#[derive(Debug, Deserialize)]
+pub struct InjectRequest {
+    pub content: String,
+    pub antecedents: Vec<u32>,
+    pub affected_subspace: Option<usize>,
 }
 
-pub async fn run_daemon(tx: broadcast::Sender<LatticeEvent>) -> anyhow::Result<()> {
-    let state = Arc::new(DaemonState { tx });
+pub struct DaemonState {
+    pub tx: broadcast::Sender<LatticeEvent>,
+    pub inject_tx: mpsc::Sender<InjectRequest>,
+}
+
+pub async fn run_daemon(
+    tx: broadcast::Sender<LatticeEvent>,
+    inject_tx: mpsc::Sender<InjectRequest>,
+) -> anyhow::Result<()> {
+    let state = Arc::new(DaemonState { tx, inject_tx });
 
     let app = Router::new()
         .route("/", get(index))
         .route("/stream", get(sse_handler))
+        .route("/inject", post(inject_handler))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:3000").await?;
-    log::info!("Lattice Visualization Server running at http://127.0.0.1:3000");
+    log::info!("Lattice Sandbox running at http://127.0.0.1:3000");
     axum::serve(listener, app).await?;
 
     Ok(())
@@ -42,6 +55,16 @@ pub async fn run_daemon(tx: broadcast::Sender<LatticeEvent>) -> anyhow::Result<(
 
 async fn index() -> impl axum::response::IntoResponse {
     axum::response::Html(include_str!("../assets/index.html"))
+}
+
+async fn inject_handler(
+    State(state): State<Arc<DaemonState>>,
+    Json(payload): Json<InjectRequest>,
+) -> StatusCode {
+    match state.inject_tx.send(payload).await {
+        Ok(_) => StatusCode::ACCEPTED,
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
+    }
 }
 
 async fn sse_handler(

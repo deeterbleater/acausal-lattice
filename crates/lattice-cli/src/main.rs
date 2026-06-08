@@ -2,18 +2,18 @@ use lattice_core::{Achronon, PrecipitationRegistry, LatticeTopologyEngine};
 use lattice_tensor::TensorTransformationEngine;
 use lattice_cce::CognitiveContextEngine;
 use lattice_llm::AnthropicClient;
-use lattice_daemon::{LatticeEvent, run_daemon};
+use lattice_daemon::{LatticeEvent, InjectRequest, run_daemon};
 use roaring::RoaringBitmap;
 use candle_core::{Tensor, Device, DType};
 use anyhow::Result;
 use std::env;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, mpsc};
 
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenvy::dotenv().ok();
     env_logger::init();
-    println!("--- Acausal Lattice: Visualization Demo ---");
+    println!("--- Acausal Lattice: Visualization Sandbox ---");
 
     let api_key = env::var("ANTHROPIC_API_KEY").ok();
     
@@ -21,9 +21,12 @@ async fn main() -> Result<()> {
     let (tx, _rx) = broadcast::channel(100);
     let daemon_tx = tx.clone();
 
+    // Set up MPSC for receiving user injections from the web sandbox
+    let (inject_tx, mut inject_rx) = mpsc::channel::<InjectRequest>(32);
+
     // Spawn the visualization server
     tokio::spawn(async move {
-        if let Err(e) = run_daemon(daemon_tx).await {
+        if let Err(e) = run_daemon(daemon_tx, inject_tx).await {
             log::error!("Visualization server failed: {}", e);
         }
     });
@@ -104,6 +107,33 @@ RULES:
     let mut max_llm_queries = 3;
     
     loop {
+        // Process user injections non-blockingly
+        while let Ok(req) = inject_rx.try_recv() {
+            println!("\n[Sandbox] Received manual injection: {}", req.content);
+            let new_id = aion.iter().map(|a| a.id).max().unwrap_or(0) + 1;
+            let mut antecedents = RoaringBitmap::new();
+            for ant in req.antecedents {
+                antecedents.insert(ant);
+            }
+            let transform = match req.affected_subspace {
+                Some(0) => "rot0",
+                Some(1) => "rot1",
+                _ => "identity",
+            };
+            let new_achronon = Achronon {
+                id: new_id,
+                antecedents,
+                orthogonals: RoaringBitmap::new(),
+                transformation_id: transform.into(),
+                content: req.content,
+                affected_subspace: req.affected_subspace,
+            };
+            aion.push(new_achronon.clone());
+            tx.send(LatticeEvent::AionExpanded(vec![new_achronon]))?;
+            // We got a user event, so we reset the LLM query budget to let it react to the user
+            max_llm_queries = 3; 
+        }
+
         step += 1;
         println!("\n[Step {}] Selecting eligible Achronons...", step);
 
@@ -113,7 +143,8 @@ RULES:
         let batch = lte.next_eligible_batch(&registry);
         
         if batch.is_empty() {
-            println!("Lattice has reached stability.");
+            // Only announce stability if we actually tried to run an empty batch
+            // The sleep at the bottom of the loop ensures we don't spam this.
             tx.send(LatticeEvent::StabilityReached)?;
             
             if let Some(key) = &api_key {
@@ -128,19 +159,22 @@ RULES:
                     
                     match llm_client.generate_achronons(&prompt).await {
                         Ok(new_achronons) => {
-                            if new_achronons.is_empty() { break; }
-                            tx.send(LatticeEvent::AionExpanded(new_achronons.clone()))?;
-                            for a in new_achronons {
-                                aion.push(a);
+                            if !new_achronons.is_empty() {
+                                tx.send(LatticeEvent::AionExpanded(new_achronons.clone()))?;
+                                for a in new_achronons {
+                                    aion.push(a);
+                                }
+                                max_llm_queries -= 1;
                             }
-                            max_llm_queries -= 1;
-                            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                            continue;
                         }
-                        Err(_) => break,
+                        Err(e) => {
+                            log::error!("Error querying LLM: {}", e);
+                        }
                     }
-                } else { break; }
-            } else { break; }
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            continue; // Wait for user injection or next tick
         }
 
         // TTE Phase
