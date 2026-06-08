@@ -18,3 +18,11 @@ tokio.workspace = true
 log.workspace = true
 env_logger.workspace = true
 dotenvy.workspace = true
+
+[[bin]]
+name = "sandbox"
+path = "src/bin/sandbox.rs"
+
+[[bin]]
+name = "demo_rashomon"
+path = "src/bin/demo_rashomon.rs"
