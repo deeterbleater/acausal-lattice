@@ -1,28 +1,35 @@
 use lattice_core::{Achronon, PrecipitationRegistry, LatticeTopologyEngine};
 use lattice_tensor::TensorTransformationEngine;
 use lattice_cce::CognitiveContextEngine;
+use lattice_llm::AnthropicClient;
 use roaring::RoaringBitmap;
 use candle_core::{Tensor, Device, DType};
 use anyhow::Result;
+use std::env;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     env_logger::init();
-    println!("--- Acausal Lattice Prototype (Optimized) ---");
+    println!("--- Acausal Lattice: LLM-Dynamic Prototype ---");
+
+    let api_key = env::var("ANTHROPIC_API_KEY").ok();
+    if api_key.is_none() {
+        println!("Warning: ANTHROPIC_API_KEY not set. System will reach stability and stop.");
+    }
 
     // 1. Initialize Aion (The potentiality web)
     let mut aion = Vec::new();
 
-    // Event 1: The Seed
+    // Initial seed events
     aion.push(Achronon {
         id: 1,
         antecedents: RoaringBitmap::new(),
         orthogonals: RoaringBitmap::new(),
         transformation_id: "identity".into(),
         content: "The original inquiry is formulated.".into(),
+        affected_subspace: None,
     });
 
-    // Event 2: Research phase (Depends on 1)
     let mut p2 = RoaringBitmap::new();
     p2.insert(1);
     aion.push(Achronon {
@@ -30,82 +37,79 @@ async fn main() -> Result<()> {
         antecedents: p2,
         orthogonals: RoaringBitmap::new(),
         transformation_id: "identity".into(),
-        content: "Core papers and documentation are analyzed.".into(),
-    });
-
-    // Event 3: Architectural Strategy (Depends on 2)
-    let mut p3 = RoaringBitmap::new();
-    p3.insert(2);
-    aion.push(Achronon {
-        id: 3,
-        antecedents: p3,
-        orthogonals: RoaringBitmap::new(),
-        transformation_id: "identity".into(),
         content: "Orthogonal architecture plan is finalized.".into(),
-    });
-
-    // Event 4: Component A Implementation (Depends on 3)
-    let mut p4 = RoaringBitmap::new();
-    p4.insert(3);
-    aion.push(Achronon {
-        id: 4,
-        antecedents: p4,
-        orthogonals: RoaringBitmap::new(),
-        transformation_id: "identity".into(),
-        content: "Lattice Topology Engine (LTE) implemented.".into(),
-    });
-
-    // Event 5: Component B Implementation (Depends on 3, Orthogonal to 4)
-    let mut p5 = RoaringBitmap::new();
-    p5.insert(3);
-    let mut o5 = RoaringBitmap::new();
-    o5.insert(4);
-    aion.push(Achronon {
-        id: 5,
-        antecedents: p5,
-        orthogonals: o5,
-        transformation_id: "identity".into(),
-        content: "Tensor Transformation Engine (TTE) implemented.".into(),
-    });
-
-    // Event 6: Integration (Depends on 4 and 5)
-    let mut p6 = RoaringBitmap::new();
-    p6.insert(4);
-    p6.insert(5);
-    aion.push(Achronon {
-        id: 6,
-        antecedents: p6,
-        orthogonals: RoaringBitmap::new(),
-        transformation_id: "identity".into(),
-        content: "System enters coherent operational state.".into(),
+        affected_subspace: None,
     });
 
     // 2. Initialize Engines
-    let lte = LatticeTopologyEngine::new(aion.clone());
-    let mut tte = TensorTransformationEngine::new(4)?;
-    let cce = CognitiveContextEngine::new(aion.clone());
+    let total_dim = 8;
+    let subspace_size = 2;
+    let mut tte = TensorTransformationEngine::new(total_dim)?;
+    tte.state = Tensor::from_slice(&[1.0f32, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0], total_dim, &Device::Cpu)?;
+
+    tte.register_operator("identity".into(), Tensor::eye(total_dim, DType::F32, &Device::Cpu)?);
+    let rot90_data: [[f32; 2]; 2] = [[0.0, -1.0], [1.0, 0.0]];
+    let rot90 = Tensor::new(&rot90_data, &Device::Cpu)?;
+    tte.register_subspace_operator("rot0".into(), 0, subspace_size, total_dim, rot90.clone())?;
+    tte.register_subspace_operator("rot1".into(), 1, subspace_size, total_dim, rot90)?;
+
     let mut registry = PrecipitationRegistry::new();
 
-    // Register identity operator
-    let eye = Tensor::eye(4, DType::F32, &Device::Cpu)?;
-    tte.register_operator("identity".into(), eye);
-
-    // 3. The Precipitation Loop
+    // 3. The Continuous Precipitation Loop
     let mut step = 0;
+    let mut max_llm_queries = 3;
+    
     loop {
         step += 1;
         println!("\n[Step {}] Selecting eligible Achronons...", step);
 
+        // Engines are re-initialized with the potentially expanded aion
+        let lte = LatticeTopologyEngine::new(aion.clone());
+        let cce = CognitiveContextEngine::new(aion.clone());
+
         let batch = lte.next_eligible_batch(&registry);
+        
         if batch.is_empty() {
-            println!("No further eligibility. Lattice has reached stability.");
-            break;
+            println!("Lattice has reached stability.");
+            
+            if let Some(key) = &api_key {
+                if max_llm_queries > 0 {
+                    println!("\n[CCE] Stability detected. Querying Claude for new potentialities...");
+                    let llm_client = AnthropicClient::new(key.clone());
+                    let prompt = cce.flatten_to_prompt(&registry);
+                    
+                    match llm_client.generate_achronons(&prompt).await {
+                        Ok(new_achronons) => {
+                            if new_achronons.is_empty() {
+                                println!("Claude returned no new Achronons. Stability is absolute.");
+                                break;
+                            }
+                            println!("Claude proposed {} new Achronons.", new_achronons.len());
+                            for a in new_achronons {
+                                println!("  - [{}] {}", a.id, a.content);
+                                aion.push(a);
+                            }
+                            max_llm_queries -= 1;
+                            continue; // Re-evaluate eligibility with new aion
+                        }
+                        Err(e) => {
+                            println!("Error querying LLM: {}. Stopping.", e);
+                            break;
+                        }
+                    }
+                } else {
+                    println!("Reached maximum LLM query limit.");
+                    break;
+                }
+            } else {
+                break;
+            }
         }
 
         println!("Batch eligibility confirmed for IDs: {:?}", batch.iter().map(|a| a.id).collect::<Vec<_>>());
 
         // TTE Phase
-        println!("TTE: Applying tensor transformations (with Tensor Fusion)...");
+        println!("TTE: Applying tensor transformations...");
         tte.apply_batch(&batch)?;
 
         // Precipitation Phase
@@ -117,8 +121,10 @@ async fn main() -> Result<()> {
         // CCE Phase
         println!("\nCCE Output:");
         println!("{}", cce.flatten_to_prompt(&registry));
+        println!("Current State Vector: {}", tte.state);
     }
 
     println!("\nFinal State Vector: \n{}", tte.state);
+    println!("Final Precipitation Registry: {:?}", registry.bits);
     Ok(())
 }

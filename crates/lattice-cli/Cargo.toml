@@ -7,6 +7,7 @@ edition = "2021"
 lattice-core = { path = "../lattice-core" }
 lattice-tensor = { path = "../lattice-tensor" }
 lattice-cce = { path = "../lattice-cce" }
+lattice-llm = { path = "../lattice-llm" }
 roaring.workspace = true
 candle-core.workspace = true
 serde.workspace = true

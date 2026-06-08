@@ -15,6 +15,8 @@ pub struct Achronon {
     pub transformation_id: String,
     /// The semantic payload of the Achronon (e.g., text for the CCE).
     pub content: String,
+    /// The index of the subspace this Achronon warps (for commutativity).
+    pub affected_subspace: Option<usize>,
 }
 
 /// The state of the system, tracking which Achronons have collapsed into reality.
@@ -73,15 +75,23 @@ impl LatticeTopologyEngine {
         eligible
     }
 
-    /// Verifies that no two Achronons in the batch have a causal dependency.
+    /// Verifies that no two Achronons in the batch have a causal dependency
+    /// and that they do not contend for the same transformation subspace.
     pub fn validate_batch_orthogonality(&self, batch: &[Achronon]) -> bool {
         let batch_ids: RoaringBitmap = batch.iter().map(|a| a.id).collect();
+        let mut used_subspaces = std::collections::HashSet::new();
         
         for achronon in batch {
-            // If any antecedent of this achronon is also in the current batch, 
-            // then they are not orthogonal.
+            // Causal dependency check
             if !achronon.antecedents.is_disjoint(&batch_ids) {
                 return false;
+            }
+
+            // Subspace contention check
+            if let Some(s) = achronon.affected_subspace {
+                if !used_subspaces.insert(s) {
+                    return false; // Two events in same batch want the same subspace
+                }
             }
         }
         true
@@ -102,6 +112,7 @@ mod tests {
             orthogonals: RoaringBitmap::new(),
             transformation_id: "init".into(),
             content: "Initial".into(),
+            affected_subspace: None,
         };
 
         let mut p2 = RoaringBitmap::new();
@@ -112,6 +123,7 @@ mod tests {
             orthogonals: RoaringBitmap::new(),
             transformation_id: "step2".into(),
             content: "Step 2".into(),
+            affected_subspace: None,
         };
 
         assert!(registry.is_eligible(&a1));
@@ -134,6 +146,7 @@ mod tests {
             orthogonals: RoaringBitmap::new(),
             transformation_id: "a1".into(),
             content: "A1".into(),
+            affected_subspace: Some(0),
         };
         
         let a2 = Achronon {
@@ -142,6 +155,7 @@ mod tests {
             orthogonals: RoaringBitmap::new(),
             transformation_id: "a2".into(),
             content: "A2".into(),
+            affected_subspace: Some(1),
         };
 
         // A1 and A2 are NOT orthogonal because A1 is an antecedent of A2.
@@ -154,7 +168,19 @@ mod tests {
             orthogonals: RoaringBitmap::new(),
             transformation_id: "a3".into(),
             content: "A3".into(),
+            affected_subspace: Some(1),
         };
-        assert!(lte.validate_batch_orthogonality(&[a1, a3]));
+        assert!(lte.validate_batch_orthogonality(&[a1.clone(), a3.clone()]));
+
+        // A1 and A4 are NOT orthogonal because they contend for the same subspace (0).
+        let a4 = Achronon {
+            id: 4,
+            antecedents: RoaringBitmap::new(),
+            orthogonals: RoaringBitmap::new(),
+            transformation_id: "a4".into(),
+            content: "A4".into(),
+            affected_subspace: Some(0),
+        };
+        assert!(!lte.validate_batch_orthogonality(&[a1, a4]));
     }
 }

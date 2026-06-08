@@ -1,5 +1,4 @@
 use lattice_core::{Achronon, PrecipitationRegistry};
-use anyhow::Result;
 
 pub struct CognitiveContextEngine {
     /// The global set of all potential Achronons.
