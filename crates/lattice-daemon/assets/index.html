@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Acausal Lattice Visualizer</title>
+    <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            background-color: #0b0e14;
+            color: #d1d5db;
+            font-family: 'JetBrains Mono', monospace;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            overflow: hidden;
+        }
+        header {
+            padding: 1rem;
+            background-color: #1a1f29;
+            border-bottom: 1px solid #2d3748;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        main {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+        #lattice-graph {
+            flex: 2;
+            border-right: 1px solid #2d3748;
+        }
+        #sidebar {
+            flex: 1;
+            padding: 1rem;
+            background-color: #0f172a;
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+            overflow-y: auto;
+        }
+        .vector-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 0.5rem;
+            margin-top: 1rem;
+        }
+        .vector-cell {
+            aspect-ratio: 1;
+            background-color: #1e293b;
+            border: 1px solid #334155;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.8rem;
+            transition: all 0.3s ease;
+        }
+        .event-log {
+            background-color: #1a1f29;
+            padding: 0.5rem;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .status-badge {
+            padding: 0.2rem 0.5rem;
+            border-radius: 9999px;
+            font-size: 0.7rem;
+            background-color: #2d3748;
+        }
+        .status-active {
+            background-color: #059669;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div>Acausal Lattice Visualizer</div>
+        <div id="status" class="status-badge">Disconnected</div>
+    </header>
+    <main>
+        <div id="lattice-graph"></div>
+        <div id="sidebar">
+            <section>
+                <h3>Latent State Vector</h3>
+                <div id="vector-grid" class="vector-grid"></div>
+            </section>
+            <section>
+                <h3>Recent Events</h3>
+                <div id="event-log" class="event-log"></div>
+            </section>
+        </div>
+    </main>
+
+    <script>
+        const nodes = new vis.DataSet();
+        const edges = new vis.DataSet();
+        const container = document.getElementById('lattice-graph');
+        const data = { nodes, edges };
+        const options = {
+            nodes: {
+                shape: 'dot',
+                size: 20,
+                font: { color: '#ffffff', size: 12 },
+                borderWidth: 2,
+                color: {
+                    background: '#1e293b',
+                    border: '#334155',
+                    highlight: { background: '#3b82f6', border: '#60a5fa' }
+                }
+            },
+            edges: {
+                arrows: { to: { enabled: true, scaleFactor: 0.5 } },
+                color: '#475569'
+            },
+            physics: {
+                enabled: true,
+                solver: 'forceAtlas2Based',
+                forceAtlas2Based: { gravitationalConstant: -50, centralGravity: 0.01, springLength: 100 }
+            }
+        };
+        const network = new vis.Network(container, data, options);
+
+        const eventSource = new EventSource('/stream');
+        const statusBadge = document.getElementById('status');
+        const vectorGrid = document.getElementById('vector-grid');
+        const eventLog = document.getElementById('event-log');
+
+        eventSource.onopen = () => {
+            statusBadge.innerText = 'Connected';
+            statusBadge.classList.add('status-active');
+        };
+
+        eventSource.onerror = () => {
+            statusBadge.innerText = 'Error';
+            statusBadge.classList.remove('status-active');
+        };
+
+        eventSource.onmessage = (e) => {
+            const event = JSON.parse(e.data);
+            handleEvent(event);
+        };
+
+        function handleEvent(event) {
+            const logItem = document.createElement('div');
+            logItem.style.marginBottom = '0.5rem';
+            logItem.innerText = `[${new Date().toLocaleTimeString()}] ${event.type}`;
+            eventLog.prepend(logItem);
+
+            switch(event.type) {
+                case 'AionExpanded':
+                    event.data.forEach(a => {
+                        if (!nodes.get(a.id)) {
+                            nodes.add({ id: a.id, label: `[${a.id}]`, title: a.content });
+                            a.antecedents.forEach(ant => {
+                                edges.add({ from: ant, to: a.id });
+                            });
+                        }
+                    });
+                    break;
+                case 'AchrononPrecipitated':
+                    nodes.update({ id: event.data, color: { background: '#059669', border: '#10b981' } });
+                    break;
+                case 'StateUpdated':
+                    updateVectorGrid(event.data);
+                    break;
+                case 'Message':
+                    logItem.innerText += `: ${event.data}`;
+                    break;
+            }
+        }
+
+        function updateVectorGrid(vector) {
+            vectorGrid.innerHTML = '';
+            vector.forEach((val, i) => {
+                const cell = document.createElement('div');
+                cell.className = 'vector-cell';
+                cell.innerText = val.toFixed(2);
+                
+                // Color mapping: positive = green, negative = red
+                const intensity = Math.min(Math.abs(val) * 255, 255);
+                if (val > 0.01) cell.style.backgroundColor = `rgba(16, 185, 129, ${Math.min(Math.abs(val), 1)})`;
+                if (val < -0.01) cell.style.backgroundColor = `rgba(239, 68, 68, ${Math.min(Math.abs(val), 1)})`;
+                
+                vectorGrid.appendChild(cell);
+            });
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,16 @@
+[package]
+name = "lattice-daemon"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+lattice-core = { path = "../lattice-core" }
+axum.workspace = true
+tower-http.workspace = true
+tokio.workspace = true
+tokio-stream.workspace = true
+futures-util.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+log.workspace = true

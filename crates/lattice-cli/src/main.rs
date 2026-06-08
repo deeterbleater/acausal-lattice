@@ -2,34 +2,35 @@ use lattice_core::{Achronon, PrecipitationRegistry, LatticeTopologyEngine};
 use lattice_tensor::TensorTransformationEngine;
 use lattice_cce::CognitiveContextEngine;
 use lattice_llm::AnthropicClient;
+use lattice_daemon::{LatticeEvent, run_daemon};
 use roaring::RoaringBitmap;
 use candle_core::{Tensor, Device, DType};
 use anyhow::Result;
 use std::env;
+use tokio::sync::broadcast;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenvy::dotenv().ok();
     env_logger::init();
-    println!("--- Acausal Lattice: Multi-Agent Dynamic Prototype ---");
+    println!("--- Acausal Lattice: Visualization Demo ---");
 
     let api_key = env::var("ANTHROPIC_API_KEY").ok();
-    if api_key.is_none() {
-        println!("Warning: ANTHROPIC_API_KEY not set in .env. System will reach stability and stop.");
-    }
+    
+    // Set up broadcasting for the visualizer
+    let (tx, _rx) = broadcast::channel(100);
+    let daemon_tx = tx.clone();
+
+    // Spawn the visualization server
+    tokio::spawn(async move {
+        if let Err(e) = run_daemon(daemon_tx).await {
+            log::error!("Visualization server failed: {}", e);
+        }
+    });
 
     // Agent Personas
-    let architect_prompt = r#"
-You are "The Architect", an agent of order and structural expansion in an Acausal Lattice.
-Your goal is to build complex, stable systems.
-Output ONLY a JSON array of new potential Achronons.
-"#;
-
-    let disruptor_prompt = r#"
-You are "The Disruptor", an agent of entropy and unexpected shifts in an Acausal Lattice.
-Your goal is to introduce complications, anomalies, and radical shifts in direction.
-Output ONLY a JSON array of new potential Achronons.
-"#;
+    let architect_prompt = "You are \"The Architect\", an agent of order and structural expansion in an Acausal Lattice. Your goal is to build complex, stable systems. Output ONLY a JSON array of new potential Achronons.";
+    let disruptor_prompt = "You are \"The Disruptor\", an agent of entropy and unexpected shifts in an Acausal Lattice. Your goal is to introduce complications, anomalies, and radical shifts in direction. Output ONLY a JSON array of new potential Achronons.";
 
     let base_system_instructions = r#"
 Output ONLY a JSON array of objects representing new potential Achronons. 
@@ -54,29 +55,32 @@ RULES:
     let agent_architect = format!("{}\n{}", architect_prompt, base_system_instructions);
     let agent_disruptor = format!("{}\n{}", disruptor_prompt, base_system_instructions);
 
-    // 1. Initialize Aion (The potentiality web)
+    // 1. Initialize Aion
     let mut aion = Vec::new();
 
-    // Initial seed events
-    aion.push(Achronon {
+    let seed1 = Achronon {
         id: 1,
         antecedents: RoaringBitmap::new(),
         orthogonals: RoaringBitmap::new(),
         transformation_id: "identity".into(),
         content: "The original inquiry is formulated.".into(),
         affected_subspace: None,
-    });
+    };
+    aion.push(seed1.clone());
 
     let mut p2 = RoaringBitmap::new();
     p2.insert(1);
-    aion.push(Achronon {
+    let seed2 = Achronon {
         id: 2,
         antecedents: p2,
         orthogonals: RoaringBitmap::new(),
         transformation_id: "identity".into(),
         content: "Orthogonal architecture plan is finalized.".into(),
         affected_subspace: None,
-    });
+    };
+    aion.push(seed2.clone());
+
+    tx.send(LatticeEvent::AionExpanded(vec![seed1, seed2]))?;
 
     // 2. Initialize Engines
     let total_dim = 8;
@@ -92,7 +96,10 @@ RULES:
 
     let mut registry = PrecipitationRegistry::new();
 
-    // 3. The Continuous Precipitation Loop
+    // Broadcast initial state
+    tx.send(LatticeEvent::StateUpdated(tte.state.to_vec1()?))?;
+
+    // 3. Loop
     let mut step = 0;
     let mut max_llm_queries = 3;
     
@@ -100,7 +107,6 @@ RULES:
         step += 1;
         println!("\n[Step {}] Selecting eligible Achronons...", step);
 
-        // Engines are re-initialized with the potentially expanded aion
         let lte = LatticeTopologyEngine::new(aion.clone());
         let cce = CognitiveContextEngine::new(aion.clone());
 
@@ -108,63 +114,51 @@ RULES:
         
         if batch.is_empty() {
             println!("Lattice has reached stability.");
+            tx.send(LatticeEvent::StabilityReached)?;
             
             if let Some(key) = &api_key {
                 if max_llm_queries > 0 {
                     let agent_name = if max_llm_queries % 2 == 0 { "The Architect" } else { "The Disruptor" };
                     let system_prompt = if max_llm_queries % 2 == 0 { &agent_architect } else { &agent_disruptor };
 
-                    println!("\n[CCE] Stability detected. Querying {} for new potentialities...", agent_name);
+                    tx.send(LatticeEvent::Message(format!("Querying {}...", agent_name)))?;
+                    
                     let llm_client = AnthropicClient::new(key.clone(), system_prompt.clone());
                     let prompt = cce.flatten_to_prompt(&registry);
                     
                     match llm_client.generate_achronons(&prompt).await {
                         Ok(new_achronons) => {
-                            if new_achronons.is_empty() {
-                                println!("{} returned no new Achronons. Stability is absolute.", agent_name);
-                                break;
-                            }
-                            println!("{} proposed {} new Achronons.", agent_name, new_achronons.len());
+                            if new_achronons.is_empty() { break; }
+                            tx.send(LatticeEvent::AionExpanded(new_achronons.clone()))?;
                             for a in new_achronons {
-                                println!("  - [{}] ({}) {}", a.id, agent_name, a.content);
                                 aion.push(a);
                             }
                             max_llm_queries -= 1;
-                            continue; // Re-evaluate eligibility with new aion
+                            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                            continue;
                         }
-                        Err(e) => {
-                            println!("Error querying LLM: {}. Stopping.", e);
-                            break;
-                        }
+                        Err(_) => break,
                     }
-                } else {
-                    println!("Reached maximum LLM query limit.");
-                    break;
-                }
-            } else {
-                break;
-            }
+                } else { break; }
+            } else { break; }
         }
 
-        println!("Batch eligibility confirmed for IDs: {:?}", batch.iter().map(|a| a.id).collect::<Vec<_>>());
-
         // TTE Phase
-        println!("TTE: Applying tensor transformations...");
         tte.apply_batch(&batch)?;
+        tx.send(LatticeEvent::StateUpdated(tte.state.to_vec1()?))?;
 
         // Precipitation Phase
         for achronon in &batch {
             println!("Precipitating Achronon {}: {}", achronon.id, achronon.content);
             registry.precipitate(achronon);
+            tx.send(LatticeEvent::AchrononPrecipitated(achronon.id))?;
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         }
 
-        // CCE Phase
-        println!("\nCCE Output:");
-        println!("{}", cce.flatten_to_prompt(&registry));
-        println!("Current State Vector: {}", tte.state);
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
 
-    println!("\nFinal State Vector: \n{}", tte.state);
-    println!("Final Precipitation Registry: {:?}", registry.bits);
-    Ok(())
+    println!("Simulation complete. Server still running at http://127.0.0.1:3000");
+    // Keep the process alive for the visualizer
+    loop { tokio::time::sleep(std::time::Duration::from_secs(60)).await; }
 }
