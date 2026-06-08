@@ -5,17 +5,16 @@ This document maps the current Rust implementation to the technical specificatio
 ## Core Components
 
 ### 1. Lattice Topology Engine (LTE)
-- **Status:** Implemented in `lattice-core`.
+- **Status:** Optimized in `lattice-core`.
 - **Mechanism:** Uses `roaring` bitmaps for bitset tracking of precipitated Achronons.
 - **Eligibility:** Implements the $P_a \subseteq R$ check using `RoaringBitmap::is_superset`.
-- **Achronon Triple:** Represented by the `Achronon` struct (Antecedents, Orthogonals, Transformation).
+- **Acausal Invariant:** Added an explicit orthogonality validator (`validate_batch_orthogonality`) that ensures no two events in a batch have a causal dependency.
 
 ### 2. Tensor Transformation Engine (TTE)
-- **Status:** Implemented in `lattice-tensor` (CPU fallback).
-- **Mechanism:** Uses `ndarray` for matrix-vector multiplication.
-- **State Space:** A latent vector of dimension $N$ (currently 4 in the CLI demo).
-- **Batching:** Supports applying a batch of orthogonal Achronons.
-- **Future Work:** Integration with CUDA/ROCm via `candle` or `burn` for true parallel tensor contraction.
+- **Status:** Upgraded in `lattice-tensor` (GPU-ready).
+- **Mechanism:** Swapped `ndarray` for **Hugging Face's `candle-core`**, enabling future CUDA/Metal acceleration.
+- **Tensor Fusion:** Implemented true orthogonal batching. When multiple Achronons precipitate, their transformation matrices are fused into a single tensor ($T_{batch}$) via matrix multiplication before being applied to the state vector. This mathematically realizes the Commutativity Invariant.
+- **State Space:** A latent vector represented as a `candle_core::Tensor`.
 
 ### 3. Cognitive Context Engine (CCE)
 - **Status:** Implemented in `lattice-cce`.

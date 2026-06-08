@@ -2,13 +2,13 @@ use lattice_core::{Achronon, PrecipitationRegistry, LatticeTopologyEngine};
 use lattice_tensor::TensorTransformationEngine;
 use lattice_cce::CognitiveContextEngine;
 use roaring::RoaringBitmap;
-use ndarray::Array2;
+use candle_core::{Tensor, Device, DType};
 use anyhow::Result;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     env_logger::init();
-    println!("--- Acausal Lattice Prototype ---");
+    println!("--- Acausal Lattice Prototype (Optimized) ---");
 
     // 1. Initialize Aion (The potentiality web)
     let mut aion = Vec::new();
@@ -82,12 +82,13 @@ async fn main() -> Result<()> {
 
     // 2. Initialize Engines
     let lte = LatticeTopologyEngine::new(aion.clone());
-    let mut tte = TensorTransformationEngine::new(4);
+    let mut tte = TensorTransformationEngine::new(4)?;
     let cce = CognitiveContextEngine::new(aion.clone());
     let mut registry = PrecipitationRegistry::new();
 
     // Register identity operator
-    tte.register_operator("identity".into(), Array2::eye(4));
+    let eye = Tensor::eye(4, DType::F32, &Device::Cpu)?;
+    tte.register_operator("identity".into(), eye);
 
     // 3. The Precipitation Loop
     let mut step = 0;
@@ -104,7 +105,7 @@ async fn main() -> Result<()> {
         println!("Batch eligibility confirmed for IDs: {:?}", batch.iter().map(|a| a.id).collect::<Vec<_>>());
 
         // TTE Phase
-        println!("TTE: Applying tensor transformations...");
+        println!("TTE: Applying tensor transformations (with Tensor Fusion)...");
         tte.apply_batch(&batch)?;
 
         // Precipitation Phase
@@ -118,6 +119,6 @@ async fn main() -> Result<()> {
         println!("{}", cce.flatten_to_prompt(&registry));
     }
 
-    println!("\nFinal State Matrix: \n{:?}", tte.state);
+    println!("\nFinal State Vector: \n{}", tte.state);
     Ok(())
 }

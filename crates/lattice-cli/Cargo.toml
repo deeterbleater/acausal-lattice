@@ -8,7 +8,7 @@ lattice-core = { path = "../lattice-core" }
 lattice-tensor = { path = "../lattice-tensor" }
 lattice-cce = { path = "../lattice-cce" }
 roaring.workspace = true
-ndarray.workspace = true
+candle-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true

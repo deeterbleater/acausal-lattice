@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 lattice-core = { path = "../lattice-core" }
-ndarray = "0.16"
+candle-core.workspace = true
 roaring.workspace = true
 serde.workspace = true
 anyhow.workspace = true
