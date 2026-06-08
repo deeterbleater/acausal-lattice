@@ -1,0 +1,8 @@
+[package]
+name = "lattice-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+roaring.workspace = true
+serde.workspace = true

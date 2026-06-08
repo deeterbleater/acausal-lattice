@@ -1,0 +1,11 @@
+[package]
+name = "lattice-tensor"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+lattice-core = { path = "../lattice-core" }
+ndarray = "0.16"
+roaring.workspace = true
+serde.workspace = true
+anyhow.workspace = true

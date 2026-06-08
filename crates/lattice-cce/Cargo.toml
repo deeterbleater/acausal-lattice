@@ -1,0 +1,11 @@
+[package]
+name = "lattice-cce"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+lattice-core = { path = "../lattice-core" }
+roaring.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
