@@ -42,45 +42,24 @@ pub struct AnthropicClient {
     client: Client,
     api_key: String,
     model: String,
+    system_prompt: String,
 }
 
 impl AnthropicClient {
-    pub fn new(api_key: String) -> Self {
+    pub fn new(api_key: String, system_prompt: String) -> Self {
         Self {
             client: Client::new(),
             api_key,
             model: "claude-3-5-sonnet-20240620".into(),
+            system_prompt,
         }
     }
 
     pub async fn generate_achronons(&self, lattice_state: &str) -> Result<Vec<Achronon>> {
-        let system_prompt = r#"
-You are the Cognitive Context Engine of an Acausal Lattice system. 
-Your task is to observe the current state of reality and propose new potential events (Achronons) to expand the Aion.
-
-Output ONLY a JSON array of objects representing new potential Achronons. 
-Do not include any preamble or explanation.
-
-JSON Schema for each object:
-{
-  "id": integer (must be greater than existing IDs),
-  "antecedents": [integer ids of prerequisites],
-  "orthogonals": [integer ids of spacelike separated events],
-  "transformation_id": string (e.g., "rot0", "rot1", or "identity"),
-  "content": "string description of the event",
-  "affected_subspace": integer index (0 or 1) or null
-}
-
-RULES:
-1. New events must logically follow from precipitated events.
-2. Maintain the Acausal Invariant: Orthogonal events acting on the same subspace are NOT allowed.
-3. Be creative but mathematically rigorous.
-"#;
-
         let request = AnthropicRequest {
             model: self.model.clone(),
             max_tokens: 1024,
-            system: system_prompt.into(),
+            system: self.system_prompt.clone(),
             messages: vec![AnthropicMessage {
                 role: "user".into(),
                 content: format!("Current Lattice State:\n\n{}", lattice_state),
