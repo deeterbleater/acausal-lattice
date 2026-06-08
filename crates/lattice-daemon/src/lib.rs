@@ -20,6 +20,8 @@ pub enum LatticeEvent {
     StateUpdated(Vec<f32>),
     StabilityReached,
     Message(String),
+    LatticeReset,
+    AgentListUpdated(Vec<String>),
 }
 
 #[derive(Debug, Deserialize)]
@@ -29,21 +31,30 @@ pub struct InjectRequest {
     pub affected_subspace: Option<usize>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type")]
+pub enum DaemonCommand {
+    Inject { payload: InjectRequest },
+    Reset,
+    AddAgent { name: String, prompt: String, subspace: Option<usize> },
+    RemoveAgent { name: String },
+}
+
 pub struct DaemonState {
     pub tx: broadcast::Sender<LatticeEvent>,
-    pub inject_tx: mpsc::Sender<InjectRequest>,
+    pub command_tx: mpsc::Sender<DaemonCommand>,
 }
 
 pub async fn run_daemon(
     tx: broadcast::Sender<LatticeEvent>,
-    inject_tx: mpsc::Sender<InjectRequest>,
+    command_tx: mpsc::Sender<DaemonCommand>,
 ) -> anyhow::Result<()> {
-    let state = Arc::new(DaemonState { tx, inject_tx });
+    let state = Arc::new(DaemonState { tx, command_tx });
 
     let app = Router::new()
         .route("/", get(index))
         .route("/stream", get(sse_handler))
-        .route("/inject", post(inject_handler))
+        .route("/control", post(control_handler))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:3000").await?;
@@ -57,11 +68,11 @@ async fn index() -> impl axum::response::IntoResponse {
     axum::response::Html(include_str!("../assets/index.html"))
 }
 
-async fn inject_handler(
+async fn control_handler(
     State(state): State<Arc<DaemonState>>,
-    Json(payload): Json<InjectRequest>,
+    Json(command): Json<DaemonCommand>,
 ) -> StatusCode {
-    match state.inject_tx.send(payload).await {
+    match state.command_tx.send(command).await {
         Ok(_) => StatusCode::ACCEPTED,
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
     }

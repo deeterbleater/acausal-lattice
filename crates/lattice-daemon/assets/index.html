@@ -134,6 +134,28 @@
             </div>
 
             <div class="panel">
+                <h3>Control Panel</h3>
+                <button id="btn-reset" style="background-color: #ef4444; margin-bottom: 1rem;">Restart Simulation</button>
+                
+                <h4>Active Agents</h4>
+                <ul id="agent-list" style="padding-left: 1rem; margin-top: 0.5rem; font-size: 0.85rem;"></ul>
+                
+                <h4 style="margin-top: 1rem;">Add Agent</h4>
+                <form id="add-agent-form">
+                    <input type="text" id="agent-name" placeholder="Agent Name (e.g. The Jester)" required>
+                    <textarea id="agent-prompt" rows="2" placeholder="Persona prompt..." required></textarea>
+                    <select id="agent-subspace">
+                        <option value="">No Subspace</option>
+                        <option value="0">Subspace 0</option>
+                        <option value="1">Subspace 1</option>
+                        <option value="2">Subspace 2</option>
+                        <option value="3">Subspace 3</option>
+                    </select>
+                    <button type="submit">Add Agent</button>
+                </form>
+            </div>
+
+            <div class="panel">
                 <h3>Inject Event (Third Agent)</h3>
                 <form id="inject-form">
                     <textarea id="inj-content" rows="3" placeholder="Describe the new potential event..." required></textarea>
@@ -263,6 +285,58 @@
             }
         });
 
+        // Control Panel Handling
+        document.getElementById('btn-reset').addEventListener('click', async () => {
+            try {
+                await fetch('/control', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ type: 'Reset' })
+                });
+            } catch(err) { console.error(err); }
+        });
+
+        document.getElementById('add-agent-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const name = document.getElementById('agent-name').value;
+            const prompt = document.getElementById('agent-prompt').value;
+            const subStr = document.getElementById('agent-subspace').value;
+            const subspace = subStr === "" ? null : parseInt(subStr);
+
+            try {
+                const res = await fetch('/control', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ type: 'AddAgent', name, prompt, subspace })
+                });
+                if(res.ok) {
+                    document.getElementById('agent-name').value = "";
+                    document.getElementById('agent-prompt').value = "";
+                }
+            } catch(err) { console.error(err); }
+        });
+
+        async function removeAgent(name) {
+            try {
+                await fetch('/control', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ type: 'RemoveAgent', name })
+                });
+            } catch(err) { console.error(err); }
+        }
+
+        function updateAgentList(agentNames) {
+            const list = document.getElementById('agent-list');
+            list.innerHTML = '';
+            agentNames.forEach(name => {
+                const li = document.createElement('li');
+                li.style.marginBottom = '0.25rem';
+                li.innerHTML = `<span>${name}</span> <button onclick="removeAgent('${name}')" style="width:auto; padding:0.1rem 0.3rem; font-size:0.6rem; margin-left:0.5rem; background-color:#ef4444;">X</button>`;
+                list.appendChild(li);
+            });
+        }
+
         function handleEvent(event) {
             const logItem = document.createElement('div');
             logItem.style.marginBottom = '0.25rem';
@@ -270,6 +344,15 @@
             eventLog.prepend(logItem);
 
             switch(event.type) {
+                case 'LatticeReset':
+                    nodes.clear();
+                    edges.clear();
+                    achrononStore.clear();
+                    inspectorContent.innerHTML = "Select a node in the graph to view details.";
+                    break;
+                case 'AgentListUpdated':
+                    updateAgentList(event.data);
+                    break;
                 case 'AionExpanded':
                     event.data.forEach(a => {
                         achrononStore.set(a.id, a);

@@ -2,7 +2,7 @@ use lattice_core::{Achronon, PrecipitationRegistry, LatticeTopologyEngine};
 use lattice_tensor::TensorTransformationEngine;
 use lattice_cce::CognitiveContextEngine;
 use lattice_llm::AnthropicClient;
-use lattice_daemon::{LatticeEvent, InjectRequest, run_daemon};
+use lattice_daemon::{LatticeEvent, DaemonCommand, run_daemon};
 use roaring::RoaringBitmap;
 use candle_core::{Tensor, Device, DType};
 use anyhow::Result;
@@ -20,7 +20,7 @@ async fn main() -> Result<()> {
     // Set up broadcasting for the visualizer
     let (tx, _rx) = broadcast::channel(100);
     let daemon_tx = tx.clone();
-    let (inject_tx, _inject_rx) = mpsc::channel::<InjectRequest>(32);
+    let (inject_tx, _inject_rx) = mpsc::channel::<DaemonCommand>(32);
 
     // Spawn the visualization server
     tokio::spawn(async move {
